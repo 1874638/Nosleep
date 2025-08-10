@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>No Sleep (Keep Screen On)</title>
+  <meta name="color-scheme" content="light dark" />
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      margin: 0; padding: 24px;
+      display: grid; place-items: center;
+      min-height: 100svh;
+      background: canvas; color: canvastext;
+    }
+    .card {
+      width: min(680px, 92vw);
+      border: 1px solid color-mix(in oklab, canvastext 20%, transparent);
+      border-radius: 16px; padding: 24px 20px;
+      box-shadow: 0 6px 24px color-mix(in oklab, canvastext 8%, transparent);
+    }
+    h1 { margin: 0 0 10px; font-size: 20px; }
+    p { margin: 8px 0 0; opacity: 0.8; }
+    .status { margin-top: 14px; font-weight: 600; }
+    .actions { margin-top: 18px; display: flex; gap: 10px; flex-wrap: wrap; }
+    button {
+      appearance: none; border: 0; border-radius: 999px;
+      padding: 12px 18px; font-weight: 700; cursor: pointer;
+      background: #0a7cff; color: white;
+    }
+    button.sec { background: color-mix(in oklab, canvastext 12%, canvas); color: inherit; }
+    .hint { font-size: 12px; opacity: 0.7; margin-top: 10px; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+  <!-- NoSleep.js (fallback for browsers without the Screen Wake Lock API, e.g., iOS Safari) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/nosleep.js@0.12.0/dist/NoSleep.min.js"></script>
+</head>
+<body>
+  <main class="card">
+    <h1>Keep Screen On (No Sleep)</h1>
+    <p>Use the button below to keep the screen awake while this page is open.</p>
+    <div class="status" id="status">Status: Off</div>
+    <div class="actions">
+      <button id="toggleBtn" type="button">Enable</button>
+      <button id="testBtn" class="sec" type="button">Brightness Hold Test</button>
+    </div>
+    <div class="hint">
+      - Some browsers require a user gesture (button click) before it works.<br />
+      - Works most reliably over HTTPS. (Opening the file locally also works in most cases.)
+    </div>
+  </main>
+
+  <script>
+    // State
+    let keepAwakeWanted = false;   // Whether the user toggled "Enable"
+    let wakeLock = null;           // Screen Wake Lock sentinel
+    let noSleep = null;            // NoSleep.js instance
+    let usingFallback = false;     // Whether NoSleep.js is being used
+
+    const statusEl = document.getElementById('status');
+    const toggleBtn = document.getElementById('toggleBtn');
+    const testBtn = document.getElementById('testBtn');
+
+    function setStatus(text) {
+      statusEl.textContent = 'Status: ' + text;
+      toggleBtn.textContent = keepAwakeWanted ? 'Disable' : 'Enable';
+    }
+
+    async function requestWakeLock() {
+      try {
+        if (!('wakeLock' in navigator)) throw new Error('Wake Lock API not supported');
+        wakeLock = await navigator.wakeLock.request('screen');
+        usingFallback = false;
+        setStatus('On (Screen Wake Lock)');
+        // When the wake lock is released, try to recover if desired
+        wakeLock.addEventListener('release', () => {
+          wakeLock = null;
+          if (keepAwakeWanted) {
+            setStatus('Released, will retry when visible');
+          } else {
+            setStatus('Off');
+          }
+        });
+      } catch (err) {
+        // Fallback to NoSleep.js
+        tryFallback(err);
+      }
+    }
+
+    function tryFallback(err) {
+      try {
+        if (typeof NoSleep === 'function') {
+          if (!noSleep) noSleep = new NoSleep();
+          noSleep.enable();
+          usingFallback = true;
+          setStatus('On (Fallback: NoSleep.js)');
+          // On iOS, it may stop when app switches; visibilitychange will re-enable
+        } else {
+          setStatus('Error: ' + (err && err.message ? err.message : 'Not supported'));
+          console.error(err);
+        }
+      } catch (e) {
+        setStatus('Fallback failed: ' + (e && e.message ? e.message : e));
+        console.error(e);
+      }
+    }
+
+    async function enableKeepAwake() {
+      keepAwakeWanted = true;
+      await requestWakeLock();
+    }
+
+    function disableKeepAwake() {
+      keepAwakeWanted = false;
+      if (wakeLock) {
+        try { wakeLock.release(); } catch (_) {}
+        wakeLock = null;
+      }
+      if (noSleep && usingFallback) {
+        try { noSleep.disable(); } catch (_) {}
+      }
+      usingFallback = false;
+      setStatus('Off');
+    }
+
+    // Toggle button
+    toggleBtn.addEventListener('click', async () => {
+      if (keepAwakeWanted) {
+        disableKeepAwake();
+      } else {
+        await enableKeepAwake();
+      }
+    });
+
+    // When the tab becomes visible again, try to restore the lock/fallback if desired
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible' && keepAwakeWanted) {
+        if ('wakeLock' in navigator) {
+          if (!wakeLock) {
+            await requestWakeLock();
+          }
+        } else if (noSleep && usingFallback) {
+          try { noSleep.enable(); } catch (_) {}
+        }
+      }
+    });
+
+    // Simple test: user-gesture alert
+    testBtn.addEventListener('click', () => {
+      alert('Test: After closing this alert, check if the screen stays awake.');
+    });
+
+    // Initial state
+    setStatus('Off');
+  </script>
+</body>
+</html>
